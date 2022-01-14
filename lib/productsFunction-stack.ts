@@ -8,16 +8,38 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 
 
 interface ProductsFunctionStackProps extends cdk.StackProps {
-  productsDdb : dynamodb.Table
+  productsDdb : dynamodb.Table;
+  eventsDdb: dynamodb.Table;
 }
 
 export class ProductsFunctionStack extends cdk.Stack {
   // permite acesso para outras stacks
-  readonly handler: lambdaNodeJS.NodejsFunction;
+  readonly productsHandler: lambdaNodeJS.NodejsFunction;
 
   constructor(scope: Construct, id: string, props: ProductsFunctionStackProps) {
     super(scope, id, props);
-    this.handler = new lambdaNodeJS.NodejsFunction(this, "ProductsFunction", {
+
+    const productEventsHandler = new lambdaNodeJS.NodejsFunction(this, "ProductEventsFunction", {
+      functionName: "ProductEventsFunction",
+      entry: "lambda/products/productEventsFunction.js", // referente a raiz do projeto
+      handler: "handler",
+      bundling: {
+        minify: true,
+        sourceMap: false,
+      },
+      memorySize: 128,
+      timeout: cdk.Duration.seconds(5),
+      environment: {
+        EVENTS_DDB: props.eventsDdb.tableName
+      },
+      tracing: lambda.Tracing.ACTIVE,
+      insightsVersion: lambda.LambdaInsightsVersion.VERSION_1_0_119_0       
+    });
+
+    // permite apenas escrita pela função productEventsHandler
+    props.eventsDdb.grantWriteData(productEventsHandler);
+
+    this.productsHandler = new lambdaNodeJS.NodejsFunction(this, "ProductsFunction", {
       functionName: "ProductsFunction",
       entry: "lambda/products/productsFunction.js", // referente a raiz do projeto
       handler: "handler",
@@ -28,13 +50,16 @@ export class ProductsFunctionStack extends cdk.Stack {
       memorySize: 128,
       timeout: cdk.Duration.seconds(10),
       environment: {
-        PRODUCTS_DDB: props.productsDdb.tableName
+        PRODUCTS_DDB: props.productsDdb.tableName,
+        PRODUCTS_EVENTS_FUNCTION_NAME: productEventsHandler.functionName // obtem o nome da funcao como env
       },
       tracing: lambda.Tracing.ACTIVE,
       insightsVersion: lambda.LambdaInsightsVersion.VERSION_1_0_119_0       
-    })
+    });
 
-    props.productsDdb.grantReadWriteData(this.handler);
+    props.productsDdb.grantReadWriteData(this.productsHandler);
+    // garante permissão de invocação  da função de eventos para função de produtos
+    productEventsHandler.grantInvoke(this.productsHandler);
   }
 
 }
